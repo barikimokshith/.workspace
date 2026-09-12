@@ -1,0 +1,12 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#0B0D0C" />
+        </shape>
+    </item>
+    <item
+        android:drawable="@drawable/loin_lock_logo"
+        android:gravity="center"
+        android:width="180dp"
+        android:height="180dp" />
+</layer-list>

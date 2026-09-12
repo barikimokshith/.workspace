@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">loin</string>
+    <string name="title_activity_main">loin</string>
+    <string name="package_name">app.loin.focus</string>
+    <string name="custom_url_scheme">app.loin.focus</string>
+</resources>
