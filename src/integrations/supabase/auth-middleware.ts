@@ -3,6 +3,7 @@ import { createMiddleware } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from './types'
+import { createRemoteJWKSet, jwtVerify } from 'jose'
 
 
 
@@ -100,6 +101,47 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
       throw new Error('Unauthorized: Invalid token');
     }
 
+    const firebaseProjectId = 'loin-813a3'
+    const firebaseIssuer = `https://securetoken.google.com/${firebaseProjectId}`
+    let claims: Record<string, unknown>
+    let userId: string
+    let isFirebaseToken = false
+    try {
+      const verified = await jwtVerify(
+        token,
+        createRemoteJWKSet(new URL('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com')),
+        { issuer: firebaseIssuer, audience: firebaseProjectId },
+      )
+      if (verified.payload.role !== 'authenticated') {
+        throw new Error('Firebase token is missing the authenticated role claim')
+      }
+      const loinUserId = verified.payload.loin_user_id
+      if (typeof loinUserId !== 'string' || !/^[0-9a-f-]{36}$/i.test(loinUserId)) {
+        throw new Error('Firebase token is missing a valid LOIN user ID')
+      }
+      claims = verified.payload
+      userId = loinUserId
+      isFirebaseToken = true
+    } catch (firebaseError) {
+      // Existing web Supabase sessions keep their current auth flow.
+      if (
+        firebaseError instanceof Error &&
+        firebaseError.message.includes('authenticated role claim')
+      ) throw new Error('Unauthorized: Firebase account is missing required claims')
+      const supabase = createClient<Database>(
+        SUPABASE_URL!,
+        SUPABASE_PUBLISHABLE_KEY!,
+        {
+          global: { fetch: createSupabaseFetch(SUPABASE_PUBLISHABLE_KEY!) },
+          auth: { storage: undefined, persistSession: false, autoRefreshToken: false },
+        },
+      )
+      const { data, error } = await supabase.auth.getClaims(token)
+      if (error || !data?.claims?.sub) throw new Error('Unauthorized: Invalid token')
+      claims = data.claims as Record<string, unknown>
+      userId = String(data.claims.sub)
+    }
+
     const supabase = createClient<Database>(
       SUPABASE_URL!,
       SUPABASE_PUBLISHABLE_KEY!,
@@ -118,20 +160,11 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
       }
     );
 
-    const { data, error } = await supabase.auth.getClaims(token);
-    if (error || !data?.claims) {
-      throw new Error('Unauthorized: Invalid token');
-    }
-
-    if (!data.claims.sub) {
-      throw new Error('Unauthorized: No user ID found in token');
-    }
-
     return next({
       context: {
         supabase,
-        userId: data.claims.sub,
-        claims: data.claims,
+        userId,
+        claims: { ...claims, isFirebase: isFirebaseToken },
       },
     });
   },
