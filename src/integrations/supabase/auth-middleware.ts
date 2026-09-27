@@ -3,7 +3,7 @@ import { createMiddleware } from '@tanstack/react-start'
 import { getRequest } from '@tanstack/react-start/server'
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from './types'
-import { createRemoteJWKSet, jwtVerify } from 'jose'
+import { createRemoteJWKSet, decodeJwt, jwtVerify } from 'jose'
 
 
 
@@ -103,31 +103,44 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
 
     const firebaseProjectId = 'loin-813a3'
     const firebaseIssuer = `https://securetoken.google.com/${firebaseProjectId}`
+    let firebaseCandidate = false
+    try {
+      // This only selects the verification path. Authorization relies on the
+      // signature, issuer, and audience checks below, never this decoded value.
+      firebaseCandidate = decodeJwt(token).iss === firebaseIssuer
+    } catch {
+      // Supabase Auth tokens are validated by Supabase below.
+    }
     let claims: Record<string, unknown>
     let userId: string
     let isFirebaseToken = false
-    try {
-      const verified = await jwtVerify(
-        token,
-        createRemoteJWKSet(new URL('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com')),
-        { issuer: firebaseIssuer, audience: firebaseProjectId },
-      )
+    if (firebaseCandidate) {
+      let verified
+      try {
+        verified = await jwtVerify(
+          token,
+          createRemoteJWKSet(new URL('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com')),
+          { issuer: firebaseIssuer, audience: firebaseProjectId },
+        )
+      } catch (error) {
+        // Do not log the bearer token. These details distinguish stale/wrong
+        // project tokens from bad signatures or an unavailable Google key set.
+        console.error('[Auth] Firebase ID token verification failed:', error instanceof Error ? error.message : 'unknown verification error')
+        throw new Error('Unauthorized: Firebase ID token verification failed')
+      }
+
       if (verified.payload.role !== 'authenticated') {
-        throw new Error('Firebase token is missing the authenticated role claim')
+        throw new Error('Unauthorized: Firebase account is missing the authenticated role claim; refresh the ID token after setting Firebase custom claims')
       }
       const loinUserId = verified.payload.loin_user_id
-      if (typeof loinUserId !== 'string' || !/^[0-9a-f-]{36}$/i.test(loinUserId)) {
-        throw new Error('Firebase token is missing a valid LOIN user ID')
+      if (typeof loinUserId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(loinUserId)) {
+        throw new Error('Unauthorized: Firebase account is missing a valid LOIN user ID claim')
       }
       claims = verified.payload
       userId = loinUserId
       isFirebaseToken = true
-    } catch (firebaseError) {
+    } else {
       // Existing web Supabase sessions keep their current auth flow.
-      if (
-        firebaseError instanceof Error &&
-        firebaseError.message.includes('authenticated role claim')
-      ) throw new Error('Unauthorized: Firebase account is missing required claims')
       const supabase = createClient<Database>(
         SUPABASE_URL!,
         SUPABASE_PUBLISHABLE_KEY!,
@@ -137,7 +150,10 @@ export const requireSupabaseAuth = createMiddleware({ type: 'function' }).server
         },
       )
       const { data, error } = await supabase.auth.getClaims(token)
-      if (error || !data?.claims?.sub) throw new Error('Unauthorized: Invalid token')
+      if (error || !data?.claims?.sub) {
+        console.error('[Auth] Supabase access token validation failed:', error?.message ?? 'missing subject claim')
+        throw new Error('Unauthorized: Invalid Supabase access token')
+      }
       claims = data.claims as Record<string, unknown>
       userId = String(data.claims.sub)
     }

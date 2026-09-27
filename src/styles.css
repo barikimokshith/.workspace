@@ -426,3 +426,41 @@
     color: var(--background);
   }
 }
+@keyframes route-page-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes route-page-wave {
+  0% { opacity: 0; transform: translateY(-100%); }
+  20% { opacity: 0.28; }
+  100% { opacity: 0; transform: translateY(100vh); }
+}
+
+.route-page-enter {
+  /* Never transform/filter this wrapper: fixed dialogs and controls inside
+     would become fixed to this scrolling element instead of the viewport. */
+  animation: route-page-enter 180ms ease-out both;
+}
+
+.route-page-enter::before {
+  position: fixed;
+  z-index: 999;
+  inset: 0 0 auto;
+  height: 22vh;
+  content: "";
+  pointer-events: none;
+  background: radial-gradient(ellipse at 50% 0%, rgb(255 255 255 / 18%), rgb(255 255 255 / 7%) 38%, transparent 74%);
+  animation: route-page-wave 280ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-page-enter {
+    animation-duration: 1ms;
+  }
+
+  .route-page-enter::before {
+    animation: none;
+    display: none;
+  }
+}
